@@ -5,3 +5,4 @@ scikit-learn==1.4.0
 seaborn==0.13.1
 matplotlib==3.8.2
 plotly==5.18.0
+joblib
