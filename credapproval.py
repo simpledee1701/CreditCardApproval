@@ -5,11 +5,12 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.tree import DecisionTreeClassifier, plot_tree
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, roc_curve, auc
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, roc_curve, auc, precision_recall_curve
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
+import seaborn as sns
 import logging
 from typing import Dict, Tuple, List, Any
 import joblib
@@ -22,49 +23,6 @@ logger = logging.getLogger(__name__)
 st.set_page_config(page_title="Credit Card Approval Predictor", layout="wide")
 
 # Add the same CSS styles...
-st.markdown("""
-    <style>
-        .main {padding: 2rem;}
-        .stButton>button {
-            width: 100%;
-            background-color: #4CAF50;
-            color: white;
-            font-weight: bold;
-            border-radius: 10px;
-            padding: 0.75rem;
-            transition: all 0.3s ease;
-            border: none;
-            margin: 1rem 0;
-        }
-        .stButton>button:hover {
-            background-color: #45a049;
-            transform: translateY(-2px);
-        }
-        .metric-card {
-            background-color: black;
-            padding: 1.5rem;
-            border-radius: 15px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-            margin-bottom: 1rem;
-            border-left: 5px solid #4CAF50;
-        }
-        .metric-card.denied {
-            border-left-color: #ff4444;
-        }
-        .stTabs {
-            background-color: black;
-            padding: 1rem;
-            border-radius: 10px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        }
-        .section-header {
-            padding: 1rem;
-            background-color: #f1f3f5;
-            border-radius: 10px;
-            margin: 1rem 0;
-        }
-    </style>
-""", unsafe_allow_html=True)
 
 # Constants for file paths
 MODEL_DIR = 'models'
@@ -279,19 +237,162 @@ def plot_feature_importance(importance_dict):
     )
     return fig
 
+st.markdown("""
+    <style>
+        .main {padding: 2rem;}
+        .centered-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 1rem;
+        }
+        .stButton>button {
+            width: 100%;
+            background-color: #4CAF50;
+            color: white;
+            font-weight: bold;
+            border-radius: 10px;
+            padding: 0.75rem;
+            transition: all 0.3s ease;
+            border: none;
+            margin: 1rem 0;
+        }
+        .stButton>button:hover {
+            background-color: #45a049;
+            transform: translateY(-2px);
+        }
+        .metric-card {
+            background-color: black;
+            padding: 1.5rem;
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 1rem;
+            border-left: 5px solid #4CAF50;
+        }
+        .metric-card.denied {
+            border-left-color: #ff4444;
+        }
+        .stTabs {
+            background-color: black;
+            padding: 1rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .section-header {
+            padding: 1rem;
+            background-color: #f1f3f5;
+            border-radius: 10px;
+            margin: 1rem 0;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+def plot_confusion_matrix(conf_matrix):
+    fig = go.Figure(data=go.Heatmap(
+        z=conf_matrix,
+        x=['Predicted Negative', 'Predicted Positive'],
+        y=['Actual Negative', 'Actual Positive'],
+        colorscale='Blues',
+        showscale=True
+    ))
+    
+    fig.update_layout(
+        title="Confusion Matrix",
+        xaxis_title="Predicted Label",
+        yaxis_title="True Label",
+        height=400
+    )
+    
+    # Add text annotations
+    for i in range(len(conf_matrix)):
+        for j in range(len(conf_matrix[i])):
+            fig.add_annotation(
+                x=j,
+                y=i,
+                text=str(conf_matrix[i][j]),
+                showarrow=False,
+                font=dict(color='white' if conf_matrix[i][j] > conf_matrix.max()/2 else 'black')
+            )
+    
+    return fig
+
+def plot_precision_recall_curve(y_test, y_score):
+    precision, recall, _ = precision_recall_curve(y_test, y_score)
+    
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=recall, 
+        y=precision,
+        mode='lines',
+        name='Precision-Recall curve'
+    ))
+    
+    fig.update_layout(
+        title='Precision-Recall Curve',
+        xaxis_title='Recall',
+        yaxis_title='Precision',
+        height=400
+    )
+    
+    return fig
+
+def plot_classification_report(report_dict):
+    # Extract metrics for each class
+    classes = []
+    precision = []
+    recall = []
+    f1 = []
+    support = []
+    
+    for k, v in report_dict.items():
+        if k not in ('accuracy', 'macro avg', 'weighted avg'):
+            classes.append(f'Class {k}')
+            precision.append(v['precision'])
+            recall.append(v['recall'])
+            f1.append(v['f1-score'])
+            support.append(v['support'])
+    
+    fig = go.Figure(data=[
+        go.Bar(name='Precision', x=classes, y=precision),
+        go.Bar(name='Recall', x=classes, y=recall),
+        go.Bar(name='F1-Score', x=classes, y=f1)
+    ])
+    
+    fig.update_layout(
+        barmode='group',
+        title='Classification Metrics by Class',
+        xaxis_title='Class',
+        yaxis_title='Score',
+        height=400
+    )
+    
+    return fig
+
 def main():
     st.title("Credit Card Approval Prediction System")
     try:
         X, y, selected_features, encoded_mappings, scaler = load_and_process_data('Application_Data.csv')
         results = train_models(X, y, selected_features)
         
-        col1, col2 = st.columns([1, 2])
+        # Model Selection in center
+        st.markdown('<div class="centered-container">', unsafe_allow_html=True)
+        st.markdown("### Model Selection")
+        model_options = list(results.keys())
+        selected_model = st.selectbox("Select prediction model:", model_options)
+        st.markdown('</div>', unsafe_allow_html=True)
         
-        with col1:
-            st.markdown("### Application Form")
-            with st.form("prediction_form"):
-                inputs = {}
-                for feature in selected_features:
+        # Application Form in center
+        st.markdown('<div class="centered-container">', unsafe_allow_html=True)
+        st.markdown("### Application Form")
+        with st.form("prediction_form"):
+            # Create three columns for form inputs
+            col1, col2, col3 = st.columns(3)
+            
+            inputs = {}
+            cols = [col1, col2, col3]
+            col_idx = 0
+            
+            for feature in selected_features:
+                with cols[col_idx % 3]:
                     if feature in encoded_mappings:
                         options = list(encoded_mappings[feature].keys())
                         selected = st.selectbox(f"{feature.replace('_', ' ')}", options)
@@ -302,55 +403,88 @@ def main():
                             value=0.0,
                             step=0.01 if feature == 'Total_Income' else 1.0
                         )
+                col_idx += 1
+            
+            submitted = st.form_submit_button("Predict")
+            
+            if submitted:
+                input_df = pd.DataFrame([inputs])
+                numeric_cols = ['Total_Income', 'Total_Children', 'Total_Family_Members', 
+                              'Applicant_Age', 'Years_of_Working', 'Total_Bad_Debt', 'Total_Good_Debt']
+                input_df[numeric_cols] = scaler.transform(input_df[numeric_cols])
                 
-                submitted = st.form_submit_button("Predict")
+                # Make prediction using only the selected model
+                model = results[selected_model]['model']
+                pred = model.predict(input_df)[0]
+                prob = model.predict_proba(input_df)[0]
+                confidence = prob[1] if pred == 1 else prob[0]
                 
-                if submitted:
-                    input_df = pd.DataFrame([inputs])
-                    numeric_cols = ['Total_Income', 'Total_Children', 'Total_Family_Members', 
-                                  'Applicant_Age', 'Years_of_Working', 'Total_Bad_Debt', 'Total_Good_Debt']
-                    input_df[numeric_cols] = scaler.transform(input_df[numeric_cols])
-                    
-                    st.markdown("### Model Predictions")
-                    for name, result in results.items():
-                        pred = result['model'].predict(input_df)[0]
-                        prob = result['model'].predict_proba(input_df)[0]
-                        confidence = prob[1] if pred == 1 else prob[0]
-                        
-                        st.markdown(f"""
-                        <div class="metric-card">
-                            <h4>{name}</h4>
-                            <p>Decision: {'✅ Approved' if pred == 1 else '❌ Denied'}</p>
-                            <p>Confidence: {confidence:.2%}</p>
-                            <p>Best Parameters: {result['best_params']}</p>
-                        </div>
-                        """, unsafe_allow_html=True)
+                # Center the prediction result
+                st.markdown("### Prediction Result")
+                st.markdown(f"""
+                <div class="metric-card {'approved' if pred == 1 else 'denied'}">
+                    <h4>{selected_model}</h4>
+                    <p>Decision: {'✅ Approved' if pred == 1 else '❌ Denied'}</p>
+                    <p>Confidence: {confidence:.2%}</p>
+                    <p>Best Parameters: {results[selected_model]['best_params']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
         
-        with col2:
-            tabs = st.tabs(["Model Performance", "ROC Curves", "Feature Importance", "Decision Tree"])
+        # Model Analysis Tabs
+        st.markdown("### Model Analysis")
+        tabs = st.tabs(["Model Performance", "ROC Curves", "Feature Importance", "Confusion Matrix", "Classification Report", "Decision Tree"])
+        
+        with tabs[0]:
+            comparison_data = []
+            for name, result in results.items():
+                comparison_data.append({
+                    'Model': name,
+                    'Accuracy': f"{result['accuracy']:.3%}",
+                    'CV Score (mean)': f"{result['cv_scores'].mean():.3%}",
+                    'AUC-ROC': f"{result['roc_data']['auc']:.3f}"
+                })
+            st.table(pd.DataFrame(comparison_data))
+        
+        with tabs[1]:
+            st.plotly_chart(plot_roc_curves(results), use_container_width=True)
+        
+        with tabs[2]:
+            for name, result in results.items():
+                if result['feature_importance']:
+                    st.subheader(f"{name} Feature Importance")
+                    st.plotly_chart(plot_feature_importance(result['feature_importance']), use_container_width=True)
+        
+        with tabs[3]:
+            st.subheader(f"Confusion Matrix - {selected_model}")
+            conf_matrix = results[selected_model]['confusion_matrix']
+            st.plotly_chart(plot_confusion_matrix(conf_matrix), use_container_width=True)
             
-            with tabs[0]:
-                comparison_data = []
-                for name, result in results.items():
-                    comparison_data.append({
-                        'Model': name,
-                        'Accuracy': f"{result['accuracy']:.3%}",
-                        'CV Score (mean)': f"{result['cv_scores'].mean():.3%}",
-                        'AUC-ROC': f"{result['roc_data']['auc']:.3f}"
-                    })
-                st.table(pd.DataFrame(comparison_data))
+            # Add confusion matrix interpretation
+            tn, fp, fn, tp = conf_matrix.ravel()
+            st.markdown(f"""
+            **Confusion Matrix Interpretation:**
+            * True Negatives (Correctly Predicted Denials): {tn}
+            * False Positives (Incorrectly Predicted Approvals): {fp}
+            * False Negatives (Incorrectly Predicted Denials): {fn}
+            * True Positives (Correctly Predicted Approvals): {tp}
+            """)
+        
+        with tabs[4]:
+            st.subheader(f"Classification Report - {selected_model}")
+            report = results[selected_model]['classification_report']
+            st.plotly_chart(plot_classification_report(report), use_container_width=True)
             
-            with tabs[1]:
-                st.plotly_chart(plot_roc_curves(results), use_container_width=True)
-            
-            with tabs[2]:
-                for name, result in results.items():
-                    if result['feature_importance']:
-                        st.subheader(f"{name} Feature Importance")
-                        st.plotly_chart(plot_feature_importance(result['feature_importance']), use_container_width=True)
-            
-            with tabs[3]:
-                st.image('decision_tree.png')
+            # Add classification report interpretation
+            st.markdown(f"""
+            **Classification Metrics:**
+            * Overall Accuracy: {report['accuracy']:.2%}
+            * Macro Avg F1-Score: {report['macro avg']['f1-score']:.2%}
+            * Weighted Avg F1-Score: {report['weighted avg']['f1-score']:.2%}
+            """)
+        
+        with tabs[5]:
+            st.image('decision_tree.png')
     
     except Exception as e:
         logger.error(f"Application error: {str(e)}")
