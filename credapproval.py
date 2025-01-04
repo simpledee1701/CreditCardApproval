@@ -27,18 +27,41 @@ st.markdown("""
         .main {padding: 2rem;}
         .stButton>button {
             width: 100%;
-            background-color: #ff4b4b;
-            color: black;
+            background-color: #4CAF50;
+            color: white;
             font-weight: bold;
             border-radius: 10px;
+            padding: 0.75rem;
             transition: all 0.3s ease;
+            border: none;
+            margin: 1rem 0;
+        }
+        .stButton>button:hover {
+            background-color: #45a049;
+            transform: translateY(-2px);
         }
         .metric-card {
-            background-color:black;
+            background-color: black;
             padding: 1.5rem;
             border-radius: 15px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
             margin-bottom: 1rem;
+            border-left: 5px solid #4CAF50;
+        }
+        .metric-card.denied {
+            border-left-color: #ff4444;
+        }
+        .stTabs {
+            background-color: black;
+            padding: 1rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .section-header {
+            padding: 1rem;
+            background-color: #f1f3f5;
+            border-radius: 10px;
+            margin: 1rem 0;
         }
     </style>
 """, unsafe_allow_html=True)
