@@ -6,6 +6,7 @@ from sklearn.tree import DecisionTreeClassifier, plot_tree
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, roc_curve, auc, precision_recall_curve
+from sklearn.decomposition import PCA
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
@@ -30,21 +31,103 @@ SCALER_PATH = os.path.join(MODEL_DIR, 'scaler.joblib')
 ENCODERS_PATH = os.path.join(MODEL_DIR, 'encoders.joblib')
 FEATURES_PATH = os.path.join(MODEL_DIR, 'features.joblib')
 RESULTS_PATH = os.path.join(MODEL_DIR, 'model_results.joblib')
+PCA_PATH = os.path.join(MODEL_DIR, 'pca.joblib')
 
 # Create models directory if it doesn't exist
 os.makedirs(MODEL_DIR, exist_ok=True)
 
 @st.cache_data
-def load_and_process_data(_file_path: str) -> Tuple[pd.DataFrame, pd.Series, List[str], Dict, StandardScaler]:
+# def load_and_process_data(_file_path: str) -> Tuple[pd.DataFrame, pd.Series, List[str], Dict, StandardScaler]:
+#     # Check if preprocessed data exists
+#     if (os.path.exists(SCALER_PATH) and 
+#         os.path.exists(ENCODERS_PATH) and 
+#         os.path.exists(FEATURES_PATH)):
+        
+#         logger.info("Loading preprocessed data from disk...")
+#         scaler = joblib.load(SCALER_PATH)
+#         encoded_mappings = joblib.load(ENCODERS_PATH)
+#         selected_features = joblib.load(FEATURES_PATH)
+        
+#         # Load and transform data
+#         data = pd.read_csv(_file_path)
+#         X = data[selected_features].copy()
+#         y = data['Status'].copy()
+        
+#         # Apply existing transformations
+#         numeric_features = ['Total_Income', 'Total_Children', 'Total_Family_Members', 
+#                           'Applicant_Age', 'Years_of_Working', 'Total_Bad_Debt', 'Total_Good_Debt']
+#         categorical_features = list(set(selected_features) - set(numeric_features))
+        
+#         for col in categorical_features:
+#             X[col] = X[col].map(encoded_mappings[col])
+        
+#         X[numeric_features] = scaler.transform(X[numeric_features])
+        
+#         return X, y, selected_features, encoded_mappings, scaler
+    
+#     # If not, process the data and save the transformers
+#     logger.info("Processing data for the first time...")
+#     data = pd.read_csv(_file_path)
+    
+#     selected_features = [
+#         'Applicant_Gender', 'Owned_Car', 'Owned_Realty', 'Total_Children',
+#         'Total_Income', 'Income_Type', 'Education_Type', 'Family_Status',
+#         'Housing_Type', 'Total_Family_Members', 'Applicant_Age',
+#         'Years_of_Working', 'Total_Bad_Debt', 'Total_Good_Debt'
+#     ]
+    
+#     X = data[selected_features].copy()
+#     y = data['Status'].copy()
+    
+#     numeric_features = ['Total_Income', 'Total_Children', 'Total_Family_Members', 
+#                       'Applicant_Age', 'Years_of_Working', 'Total_Bad_Debt', 'Total_Good_Debt']
+#     categorical_features = list(set(selected_features) - set(numeric_features))
+    
+#     encoded_mappings = {}
+#     for col in categorical_features:
+#         le = LabelEncoder()
+#         X[col] = le.fit_transform(X[col].astype(str))
+#         encoded_mappings[col] = dict(zip(le.classes_, range(len(le.classes_))))
+    
+#     scaler = StandardScaler()
+#     X[numeric_features] = scaler.fit_transform(X[numeric_features])
+    
+#     # Save preprocessed data
+#     joblib.dump(scaler, SCALER_PATH)
+#     joblib.dump(encoded_mappings, ENCODERS_PATH)
+#     joblib.dump(selected_features, FEATURES_PATH)
+    
+#     return X, y, selected_features, encoded_mappings, scaler
+
+def load_and_process_data(_file_path: str, n_components: float = 0.95) -> Tuple[pd.DataFrame, pd.Series, List[str], Dict, StandardScaler, PCA]:
+    """
+    Load and preprocess data with PCA dimensionality reduction.
+    
+    Args:
+        _file_path (str): Path to the CSV file
+        n_components (float): Number of components for PCA. If float between 0 and 1,
+                            represents the variance to be explained
+    
+    Returns:
+        Tuple containing:
+        - X: Processed feature matrix with PCA applied
+        - y: Target variable
+        - selected_features: List of feature names
+        - encoded_mappings: Dictionary of label encodings
+        - scaler: Fitted StandardScaler
+        - pca: Fitted PCA object
+    """
     # Check if preprocessed data exists
     if (os.path.exists(SCALER_PATH) and 
         os.path.exists(ENCODERS_PATH) and 
-        os.path.exists(FEATURES_PATH)):
+        os.path.exists(FEATURES_PATH) and
+        os.path.exists(PCA_PATH)):
         
         logger.info("Loading preprocessed data from disk...")
         scaler = joblib.load(SCALER_PATH)
         encoded_mappings = joblib.load(ENCODERS_PATH)
         selected_features = joblib.load(FEATURES_PATH)
+        pca = joblib.load(PCA_PATH)
         
         # Load and transform data
         data = pd.read_csv(_file_path)
@@ -61,7 +144,11 @@ def load_and_process_data(_file_path: str) -> Tuple[pd.DataFrame, pd.Series, Lis
         
         X[numeric_features] = scaler.transform(X[numeric_features])
         
-        return X, y, selected_features, encoded_mappings, scaler
+        # Apply PCA transformation
+        X_pca = pca.transform(X)
+        X_pca = pd.DataFrame(X_pca, columns=[f'PC_{i+1}' for i in range(X_pca.shape[1])])
+        
+        return X_pca, y, selected_features, encoded_mappings, scaler, pca
     
     # If not, process the data and save the transformers
     logger.info("Processing data for the first time...")
@@ -81,21 +168,32 @@ def load_and_process_data(_file_path: str) -> Tuple[pd.DataFrame, pd.Series, Lis
                       'Applicant_Age', 'Years_of_Working', 'Total_Bad_Debt', 'Total_Good_Debt']
     categorical_features = list(set(selected_features) - set(numeric_features))
     
+    # Encode categorical features
     encoded_mappings = {}
     for col in categorical_features:
         le = LabelEncoder()
         X[col] = le.fit_transform(X[col].astype(str))
         encoded_mappings[col] = dict(zip(le.classes_, range(len(le.classes_))))
     
+    # Scale numeric features
     scaler = StandardScaler()
     X[numeric_features] = scaler.fit_transform(X[numeric_features])
     
-    # Save preprocessed data
+    # Apply PCA
+    pca = PCA(n_components=n_components)
+    X_pca = pca.fit_transform(X)
+    X_pca = pd.DataFrame(X_pca, columns=[f'PC_{i+1}' for i in range(X_pca.shape[1])])
+    
+    # Save preprocessed data and transformers
     joblib.dump(scaler, SCALER_PATH)
     joblib.dump(encoded_mappings, ENCODERS_PATH)
     joblib.dump(selected_features, FEATURES_PATH)
+    joblib.dump(pca, PCA_PATH)
     
-    return X, y, selected_features, encoded_mappings, scaler
+    logger.info(f"PCA reduced dimensions from {X.shape[1]} to {X_pca.shape[1]} features")
+    logger.info(f"Explained variance ratio: {pca.explained_variance_ratio_.cumsum()[-1]:.3f}")
+    
+    return X_pca, y, selected_features, encoded_mappings, scaler, pca
 
 @st.cache_resource
 def train_models(X: pd.DataFrame, y: pd.Series, feature_names: List[str]) -> Dict[str, Any]:
@@ -370,7 +468,7 @@ def plot_classification_report(report_dict):
 def main():
     st.title("Credit Card Approval Prediction System")
     try:
-        X, y, selected_features, encoded_mappings, scaler = load_and_process_data('Application_Data.csv')
+        X, y, selected_features, encoded_mappings, scaler,pca = load_and_process_data('Application_Data.csv')
         results = train_models(X, y, selected_features)
         
         # Model Selection in center
