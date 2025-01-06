@@ -490,5 +490,5 @@ def main():
         logger.error(f"Application error: {str(e)}")
         st.error(f"An error occurred: {str(e)}")
 
-if __name__ == '_main_':
+if __name__ == '__main__':
     main()
