@@ -76,29 +76,29 @@ def load_and_process_data(_file_path: str) -> Tuple[pd.DataFrame, pd.Series, Lis
         'Years_of_Working', 'Total_Bad_Debt', 'Total_Good_Debt'
     ]
 
-    pca = PCA(n_components=0.95)
-    X_pca = pca.fit_transform(X)
-    X_pca = pd.DataFrame(X_pca, columns=[f'PC_{i+1}' for i in range(X_pca.shape[1])])
+    # pca = PCA(n_components=0.95)
+    # X_pca = pca.fit_transform(X)
+    # X_pca = pd.DataFrame(X_pca, columns=[f'PC_{i+1}' for i in range(X_pca.shape[1])])
 
-    numeric_features = ['Total_Income', 'Total_Children', 'Total_Family_Members', 
-                      'Applicant_Age', 'Years_of_Working', 'Total_Bad_Debt', 'Total_Good_Debt']
-    categorical_features = list(set(selected_features) - set(numeric_features))
+    # numeric_features = ['Total_Income', 'Total_Children', 'Total_Family_Members', 
+    #                   'Applicant_Age', 'Years_of_Working', 'Total_Bad_Debt', 'Total_Good_Debt']
+    # categorical_features = list(set(selected_features) - set(numeric_features))
     
-    # Initialize imputers
-    numeric_imputer = SimpleImputer(strategy='median')
-    categorical_imputer = SimpleImputer(strategy='most_frequent')
+    # # Initialize imputers
+    # numeric_imputer = SimpleImputer(strategy='median')
+    # categorical_imputer = SimpleImputer(strategy='most_frequent')
     
-    imputers = {
-        'numeric': numeric_imputer,
-        'categorical': categorical_imputer
-    }
+    # imputers = {
+    #     'numeric': numeric_imputer,
+    #     'categorical': categorical_imputer
+    # }
     
-    # Impute missing values
-    for col in numeric_features:
-        X[col] = imputers['numeric'].fit_transform(X[[col]])
+    # # Impute missing values
+    # for col in numeric_features:
+    #     X[col] = imputers['numeric'].fit_transform(X[[col]])
     
-    for col in categorical_features:
-        X[col] = imputers['categorical'].fit_transform(X[[col]])
+    # for col in categorical_features:
+    #     X[col] = imputers['categorical'].fit_transform(X[[col]])
     
     X = data[selected_features].copy()
     y = data['Status'].copy()
