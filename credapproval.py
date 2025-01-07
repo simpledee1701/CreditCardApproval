@@ -1,283 +1,522 @@
 import pandas as pd
-from sklearn.model_selection import train_test_split
+import numpy as np
+from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.decomposition import PCA
+from sklearn.tree import DecisionTreeClassifier, plot_tree
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, roc_curve, auc, precision_recall_curve
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+import seaborn as sns
+import logging
+from typing import Dict, Tuple, List, Any
+import joblib
+import os
+from sklearn.decomposition import PCA
+from sklearn.impute import SimpleImputer
 
-# Set page configuration
-st.set_page_config(
-    page_title="Credit Card Approval Predictor",
-    page_icon="💳",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Custom CSS
+st.set_page_config(page_title="Credit Card Approval Predictor", layout="wide")
+
+# Add the same CSS styles...
+
+# Constants for file paths
+MODEL_DIR = 'models'
+SCALER_PATH = os.path.join(MODEL_DIR, 'scaler.joblib')
+ENCODERS_PATH = os.path.join(MODEL_DIR, 'encoders.joblib')
+FEATURES_PATH = os.path.join(MODEL_DIR, 'features.joblib')
+RESULTS_PATH = os.path.join(MODEL_DIR, 'model_results.joblib')
+
+# Create models directory if it doesn't exist
+os.makedirs(MODEL_DIR, exist_ok=True)
+
+@st.cache_data
+def load_and_process_data(_file_path: str) -> Tuple[pd.DataFrame, pd.Series, List[str], Dict, StandardScaler]:
+    # Check if preprocessed data exists
+    if (os.path.exists(SCALER_PATH) and 
+        os.path.exists(ENCODERS_PATH) and 
+        os.path.exists(FEATURES_PATH)):
+        
+        logger.info("Loading preprocessed data from disk...")
+        scaler = joblib.load(SCALER_PATH)
+        encoded_mappings = joblib.load(ENCODERS_PATH)
+        selected_features = joblib.load(FEATURES_PATH)
+        
+        # Load and transform data
+        data = pd.read_csv(_file_path)
+        X = data[selected_features].copy()
+        y = data['Status'].copy()
+        
+        # Apply existing transformations
+        numeric_features = ['Total_Income', 'Total_Children', 'Total_Family_Members', 
+                          'Applicant_Age', 'Years_of_Working', 'Total_Bad_Debt', 'Total_Good_Debt']
+        categorical_features = list(set(selected_features) - set(numeric_features))
+        
+        for col in categorical_features:
+            X[col] = X[col].map(encoded_mappings[col])
+        
+        X[numeric_features] = scaler.transform(X[numeric_features])
+        
+        return X, y, selected_features, encoded_mappings, scaler
+    
+    # If not, process the data and save the transformers
+    logger.info("Processing data for the first time...")
+    data = pd.read_csv(_file_path)
+    
+    selected_features = [
+        'Applicant_Gender', 'Owned_Car', 'Owned_Realty', 'Total_Children',
+        'Total_Income', 'Income_Type', 'Education_Type', 'Family_Status',
+        'Housing_Type', 'Total_Family_Members', 'Applicant_Age',
+        'Years_of_Working', 'Total_Bad_Debt', 'Total_Good_Debt'
+    ]
+
+    # pca = PCA(n_components=0.95)
+    # X_pca = pca.fit_transform(X)
+    # X_pca = pd.DataFrame(X_pca, columns=[f'PC_{i+1}' for i in range(X_pca.shape[1])])
+
+    # numeric_features = ['Total_Income', 'Total_Children', 'Total_Family_Members', 
+    #                   'Applicant_Age', 'Years_of_Working', 'Total_Bad_Debt', 'Total_Good_Debt']
+    # categorical_features = list(set(selected_features) - set(numeric_features))
+    
+    # # Initialize imputers
+    # numeric_imputer = SimpleImputer(strategy='median')
+    # categorical_imputer = SimpleImputer(strategy='most_frequent')
+    
+    # imputers = {
+    #     'numeric': numeric_imputer,
+    #     'categorical': categorical_imputer
+    # }
+    
+    # # Impute missing values
+    # for col in numeric_features:
+    #     X[col] = imputers['numeric'].fit_transform(X[[col]])
+    
+    # for col in categorical_features:
+    #     X[col] = imputers['categorical'].fit_transform(X[[col]])
+    
+    X = data[selected_features].copy()
+    y = data['Status'].copy()
+    
+    numeric_features = ['Total_Income', 'Total_Children', 'Total_Family_Members', 
+                      'Applicant_Age', 'Years_of_Working', 'Total_Bad_Debt', 'Total_Good_Debt']
+    categorical_features = list(set(selected_features) - set(numeric_features))
+    
+    encoded_mappings = {}
+    for col in categorical_features:
+        le = LabelEncoder()
+        X[col] = le.fit_transform(X[col].astype(str))
+        encoded_mappings[col] = dict(zip(le.classes_, range(len(le.classes_))))
+    
+    scaler = StandardScaler()
+    X[numeric_features] = scaler.fit_transform(X[numeric_features])
+    
+    # Save preprocessed data
+    joblib.dump(scaler, SCALER_PATH)
+    joblib.dump(encoded_mappings, ENCODERS_PATH)
+    joblib.dump(selected_features, FEATURES_PATH)
+    
+    return X, y, selected_features, encoded_mappings, scaler
+    
+
+
+@st.cache_resource
+def train_models(X: pd.DataFrame, y: pd.Series, feature_names: List[str]) -> Dict[str, Any]:
+    # Check if trained models exist
+    if os.path.exists(RESULTS_PATH):
+        logger.info("Loading trained models from disk...")
+        return joblib.load(RESULTS_PATH)
+    
+    logger.info("Training models for the first time...")
+    
+    # Your existing train_models code...
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    
+    param_grids = {
+        'Logistic Regression': {
+            'model': LogisticRegression(random_state=42, max_iter=2000),
+            'params': {
+                'C': [0.001, 0.01, 0.1, 1.0, 10.0],
+                'penalty': ['l2'],
+                'solver': ['lbfgs'],
+                'tol': [1e-4, 1e-5]
+            }
+        },
+        'Decision Tree': {
+            'model': DecisionTreeClassifier(random_state=42),
+            'params': {
+                'max_depth': [3, 5, 7, 10],
+                'min_samples_split': [2, 5, 10],
+                'min_samples_leaf': [1, 2, 4],
+                'criterion': ['gini', 'entropy']
+            }
+        },
+        'Random Forest': {
+            'model': RandomForestClassifier(random_state=42),
+            'params': {
+                'n_estimators': [50, 100, 200],
+                'max_depth': [5, 10, None],
+                'min_samples_split': [2, 5],
+                'min_samples_leaf': [1, 2]
+            }
+        },
+        'Gradient Boosting': {
+            'model': GradientBoostingClassifier(random_state=42),
+            'params': {
+                'n_estimators': [50, 100, 200],
+                'learning_rate': [0.01, 0.1, 0.3],
+                'max_depth': [3, 5, 7],
+                'subsample': [0.8, 1.0]
+            }
+        }
+    }
+    
+    results = {}
+    for name, config in param_grids.items():
+        try:
+            grid_search = GridSearchCV(config['model'], config['params'], cv=5, n_jobs=-1, scoring='accuracy')
+            grid_search.fit(X_train, y_train)
+            
+            best_model = grid_search.best_estimator_
+            y_pred = best_model.predict(X_test)
+            y_pred_proba = best_model.predict_proba(X_test)[:, 1]
+            
+            fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+            
+            results[name] = {
+                'model': best_model,
+                'accuracy': accuracy_score(y_test, y_pred),
+                'cv_scores': cross_val_score(best_model, X_train, y_train, cv=5),
+                'classification_report': classification_report(y_test, y_pred, output_dict=True),
+                'confusion_matrix': confusion_matrix(y_test, y_pred),
+                'roc_data': {'fpr': fpr, 'tpr': tpr, 'auc': auc(fpr, tpr)},
+                'best_params': grid_search.best_params_,
+                'feature_importance': get_feature_importance(best_model, feature_names)
+            }
+            
+            if name == 'Decision Tree':
+                plt.figure(figsize=(20,10))
+                plot_tree(best_model, feature_names=feature_names, 
+                         class_names=['Denied', 'Approved'], filled=True)
+                plt.savefig('decision_tree.png', bbox_inches='tight', dpi=300)
+                plt.close()
+                
+        except Exception as e:
+            logger.error(f"Error training {name}: {str(e)}")
+            continue
+    
+    # Save trained models and results
+    joblib.dump(results, RESULTS_PATH)
+    
+    return results
+
+# Rest of your functions remain the same...
+def get_feature_importance(model, feature_names):
+    if hasattr(model, 'feature_importances_'):
+        return dict(zip(feature_names, model.feature_importances_))
+    elif hasattr(model, 'coef_'):
+        return dict(zip(feature_names, abs(model.coef_[0])))
+    return None
+
+# Your plotting functions and main() remain the same...
+# [Previous plotting functions and main() code remains unchanged]
+
+def plot_roc_curves(results):
+    fig = go.Figure()
+    for name, result in results.items():
+        roc_data = result['roc_data']
+        fig.add_trace(go.Scatter(
+            x=roc_data['fpr'],
+            y=roc_data['tpr'],
+            name=f"{name} (AUC={roc_data['auc']:.3f})"
+        ))
+    
+    fig.add_trace(go.Scatter(
+        x=[0, 1], y=[0, 1],
+        line=dict(dash='dash', color='gray'),
+        name='Random'
+    ))
+    
+    fig.update_layout(
+        title="ROC Curves Comparison",
+        xaxis_title="False Positive Rate",
+        yaxis_title="True Positive Rate",
+        height=500
+    )
+    return fig
+
+def plot_feature_importance(importance_dict):
+    df = pd.DataFrame({
+        'Feature': list(importance_dict.keys()),
+        'Importance': list(importance_dict.values())
+    }).sort_values('Importance', ascending=True)
+    
+    fig = px.bar(
+        df,
+        x='Importance',
+        y='Feature',
+        orientation='h',
+        title='Feature Importance'
+    )
+    return fig
+
 st.markdown("""
     <style>
-        .main {
-            padding: 2rem;
+        .main {padding: 2rem;}
+        .centered-container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 1rem;
         }
         .stButton>button {
             width: 100%;
-            background-color: #FF4B4B;
+            background-color: #4CAF50;
             color: white;
-            padding: 0.5rem 1rem;
-            border-radius: 0.5rem;
+            font-weight: bold;
+            border-radius: 10px;
+            padding: 0.75rem;
+            transition: all 0.3s ease;
             border: none;
-            margin-top: 2rem;
+            margin: 1rem 0;
         }
         .stButton>button:hover {
-            background-color: #FF2B2B;
+            background-color: #45a049;
+            transform: translateY(-2px);
         }
-        .reportview-container {
-            background: #f0f2f6;
+        .metric-card {
+            background-color: black;
+            padding: 1.5rem;
+            border-radius: 15px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 1rem;
+            border-left: 5px solid #4CAF50;
         }
-        .css-1d391kg {
-            padding: 2rem 1rem;
+        .metric-card.denied {
+            border-left-color: #ff4444;
         }
-        h1 {
-            color: white;
-            font-size: 2.5rem;
-            font-weight: 700;
-            margin-bottom: 2rem;
+        .stTabs {
+            background-color: black;
+            padding: 1rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
         }
-        h3 {
-            color: white;
-            font-size: 1.5rem;
-            font-weight: 600;
-            margin-top: 2rem;
-        }
-        /* Updated styling for input labels */
-        .stSelectbox label, .stNumberInput label {
-            color: white !important;
-            font-weight: 500;
-        }
-        /* Ensure input text remains visible */
-        .stSelectbox > div > div[data-baseweb="select"] > div {
-            color: black;
-        }
-        .stNumberInput > div > div > input {
-            color: black;
-        }
-        /* Style for select dropdown options */
-        div[data-baseweb="select"] > div {
-            background-color: #262730;
-        }
-        /* Card background style */
-        .card-background {
-            background-color: rgba(0, 0, 0, 0.2);
-            border-radius: 0.5rem;
-            padding: 2rem;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        .section-header {
+            padding: 1rem;
+            background-color: #f1f3f5;
+            border-radius: 10px;
+            margin: 1rem 0;
         }
     </style>
 """, unsafe_allow_html=True)
 
-# Load and preprocess data
-@st.cache_data
-def load_and_process_data():
-    data = pd.read_csv('Application_Data.csv')
-    
-    # Clean column names and strip whitespaces
-    data.columns = data.columns.str.strip()
-    data = data.apply(lambda x: x.str.strip() if x.dtype == 'object' else x)
-    
-    # Encode categorical variables
-    categorical_cols = data.select_dtypes(include=['object']).columns
-    le = LabelEncoder()
-    encoded_mappings = {}
-    
-    for col in categorical_cols:
-        data[col] = le.fit_transform(data[col])
-        encoded_mappings[col] = dict(zip(le.classes_, range(len(le.classes_))))
-    
-    # Define features and target
-    X = data.drop(['Applicant_ID', 'Status'], axis=1)
-    y = data['Status']
-    
-    # Scale features
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-    
-    # Apply PCA
-    pca = PCA(n_components=10)
-    X_pca = pca.fit_transform(X_scaled)
-    
-    # Split data
-    X_train, X_test, y_train, y_test = train_test_split(X_pca, y, test_size=0.2, random_state=42)
-    
-    return X, y, X_train, X_test, y_train, y_test, categorical_cols, encoded_mappings, scaler, pca
-
-# Train models
-@st.cache_resource
-def train_models(X_train, y_train, X_test, y_test):
-    models = {
-        'Logistic Regression': LogisticRegression(),
-        'Decision Tree': DecisionTreeClassifier(),
-        'Random Forest': RandomForestClassifier()
-    }
-    
-    results = {}
-    for name, model in models.items():
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
-        accuracy = accuracy_score(y_test, y_pred)
-        results[name] = {
-            'model': model,
-            'accuracy': accuracy,
-            'classification_report': classification_report(y_test, y_pred, output_dict=True),
-            'confusion_matrix': confusion_matrix(y_test, y_pred)
-        }
-    
-    return results
-
-def plot_confusion_matrix(cm, model_name, key):
-    colors = px.colors.sequential.Plasma
-    fig = px.imshow(cm, 
-                    text_auto=True,
-                    color_continuous_scale=colors,
-                    labels=dict(x="Predicted", y="Actual", color="Count"),
-                    x=['Denied', 'Approved'],
-                    y=['Denied', 'Approved'])
+def plot_confusion_matrix(conf_matrix):
+    fig = go.Figure(data=go.Heatmap(
+        z=conf_matrix,
+        x=['Predicted Negative', 'Predicted Positive'],
+        y=['Actual Negative', 'Actual Positive'],
+        colorscale='Blues',
+        showscale=True
+    ))
     
     fig.update_layout(
-        title_text=f"Confusion Matrix - {model_name}",
-        title_x=0.3,
-        title_font_size=20,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(t=100, b=50, l=50, r=50),
+        title="Confusion Matrix",
+        xaxis_title="Predicted Label",
+        yaxis_title="True Label",
+        height=400
     )
-    st.plotly_chart(fig, key=key, use_container_width=True)
-
-def plot_model_comparison(results):
-    model_names = list(results.keys())
-    accuracies = [results[model]['accuracy'] for model in results]
     
-    fig = go.Figure([
-        go.Bar(
-            x=model_names,
-            y=accuracies,
-            text=[f"{acc:.2%}" for acc in accuracies],
-            textposition='auto',
-            marker_color=['#FF4B4B', '#FF8C8C', '#FFB4B4'],
-        )
+    # Add text annotations
+    for i in range(len(conf_matrix)):
+        for j in range(len(conf_matrix[i])):
+            fig.add_annotation(
+                x=j,
+                y=i,
+                text=str(conf_matrix[i][j]),
+                showarrow=False,
+                font=dict(color='white' if conf_matrix[i][j] > conf_matrix.max()/2 else 'black')
+            )
+    
+    return fig
+
+def plot_precision_recall_curve(y_test, y_score):
+    precision, recall, _ = precision_recall_curve(y_test, y_score)
+    
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=recall, 
+        y=precision,
+        mode='lines',
+        name='Precision-Recall curve'
+    ))
+    
+    fig.update_layout(
+        title='Precision-Recall Curve',
+        xaxis_title='Recall',
+        yaxis_title='Precision',
+        height=400
+    )
+    
+    return fig
+
+def plot_classification_report(report_dict):
+    # Extract metrics for each class
+    classes = []
+    precision = []
+    recall = []
+    f1 = []
+    support = []
+    
+    for k, v in report_dict.items():
+        if k not in ('accuracy', 'macro avg', 'weighted avg'):
+            classes.append(f'Class {k}')
+            precision.append(v['precision'])
+            recall.append(v['recall'])
+            f1.append(v['f1-score'])
+            support.append(v['support'])
+    
+    fig = go.Figure(data=[
+        go.Bar(name='Precision', x=classes, y=precision),
+        go.Bar(name='Recall', x=classes, y=recall),
+        go.Bar(name='F1-Score', x=classes, y=f1)
     ])
     
     fig.update_layout(
-        title=dict(
-            text="Model Performance Comparison",
-            x=0.3,
-            font=dict(size=20)
-        ),
-        xaxis_title="Model",
-        yaxis_title="Accuracy",
-        yaxis=dict(range=[0, 1], tickformat='.0%'),
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(t=100, b=50, l=50, r=50),
+        barmode='group',
+        title='Classification Metrics by Class',
+        xaxis_title='Class',
+        yaxis_title='Score',
+        height=400
     )
     
-    st.plotly_chart(fig, key="unique_model_comparison", use_container_width=True)
+    return fig
 
 def main():
-    st.title("💳 Credit Card Approval Prediction")
-    
+    st.title("Credit Card Approval Prediction System")
     try:
-        # Load data and train models
-        X, y, X_train, X_test, y_train, y_test, categorical_cols, encoded_mappings, scaler, pca = load_and_process_data()
-        results = train_models(X_train, y_train, X_test, y_test)
+        X, y, selected_features, encoded_mappings, scaler = load_and_process_data('Application_Data.csv')
+        results = train_models(X, y, selected_features)
         
-        # Create two columns for layout
-        col1, col2 = st.columns([1, 2])
+        # Model Selection in center
+        st.markdown('<div class="centered-container">', unsafe_allow_html=True)
+        st.markdown("### Model Selection")
+        model_options = list(results.keys())
+        selected_model = st.selectbox("Select prediction model:", model_options)
+        st.markdown('</div>', unsafe_allow_html=True)
         
-        with col1:
-            st.markdown("""
-                <div class="card-background" style="background-color:white;margin-bottom: 2rem;">
-                    <h3 style="margin-top: 0; color:black;">Application Details</h3>
-                </div>
-            """, unsafe_allow_html=True)
+        # Application Form in center
+        st.markdown('<div class="centered-container">', unsafe_allow_html=True)
+        st.markdown("### Application Form")
+        with st.form("prediction_form"):
+            # Create three columns for form inputs
+            col1, col2, col3 = st.columns(3)
             
-            # Collect user input
             inputs = {}
-            for col in X.columns:
-                if col in categorical_cols:
-                    display_options = list(encoded_mappings[col].keys())
-                    selected_value = st.selectbox(
-                        f"{col.replace('_', ' ').title()}",
-                        display_options,
-                        key=f"input_{col}"
-                    )
-                    inputs[col] = encoded_mappings[col][selected_value]
-                else:
-                    inputs[col] = st.number_input(
-                        f"{col.replace('_', ' ').title()}",
-                        value=0.0,
-                        key=f"input_{col}"
-                    )
+            cols = [col1, col2, col3]
+            col_idx = 0
             
-            if st.button("Predict Approval Status"):
-                # Process input
+            for feature in selected_features:
+                with cols[col_idx % 3]:
+                    if feature in encoded_mappings:
+                        options = list(encoded_mappings[feature].keys())
+                        selected = st.selectbox(f"{feature.replace('_', ' ')}", options)
+                        inputs[feature] = encoded_mappings[feature][selected]
+                    else:
+                        inputs[feature] = st.number_input(
+                            f"{feature.replace('_', ' ')}",
+                            value=0.0,
+                            step=0.01 if feature == 'Total_Income' else 1.0
+                        )
+                col_idx += 1
+            
+            submitted = st.form_submit_button("Predict")
+            
+            if submitted:
                 input_df = pd.DataFrame([inputs])
-                input_scaled = scaler.transform(input_df)
-                input_pca = pca.transform(input_scaled)
+                numeric_cols = ['Total_Income', 'Total_Children', 'Total_Family_Members', 
+                              'Applicant_Age', 'Years_of_Working', 'Total_Bad_Debt', 'Total_Good_Debt']
+                input_df[numeric_cols] = scaler.transform(input_df[numeric_cols])
                 
-                # Get Random Forest model (best performer)
-                rf_model = results['Random Forest']['model']
+                # Make prediction using only the selected model
+                model = results[selected_model]['model']
+                pred = model.predict(input_df)[0]
+                prob = model.predict_proba(input_df)[0]
+                confidence = prob[1] if pred == 1 else prob[0]
                 
-                # Predict using the Random Forest model
-                prediction = rf_model.predict(input_pca)
-                probability = rf_model.predict_proba(input_pca)[0]
-                
-                result_text = "Approved" if prediction[0] == 1 else "Denied"
-                confidence = probability[1] if prediction[0] == 1 else probability[0]
-                
+                # Center the prediction result
+                st.markdown("### Prediction Result")
                 st.markdown(f"""
-                    <div style="
-                        background-color: {'#4CAF50' if result_text == 'Approved' else '#FF4B4B'};
-                        color: white;
-                        padding: 1rem;
-                        border-radius: 0.5rem;
-                        text-align: center;
-                        margin-top: 1rem;
-                    ">
-                        <h2 style="margin: 0;">Prediction: {result_text}</h2>
-                        <p style="margin: 0.5rem 0 0 0;">Confidence: {confidence:.2%}</p>
-                    </div>
-                """, unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown("""
-                <div class="card-background" style="background-color:white;">
-                    <h3 style="margin-top: 0;color:black;">Model Performance Analysis</h3>
+                <div class="metric-card {'approved' if pred == 1 else 'denied'}">
+                    <h4>{selected_model}</h4>
+                    <p>Decision: {'✅ Approved' if pred == 1 else '❌ Denied'}</p>
+                    <p>Confidence: {confidence:.2%}</p>
+                    <p>Best Parameters: {results[selected_model]['best_params']}</p>
                 </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Model Analysis Tabs
+        st.markdown("### Model Analysis")
+        tabs = st.tabs(["Model Performance", "ROC Curves", "Feature Importance", "Confusion Matrix", "Classification Report", "Decision Tree"])
+        
+        with tabs[0]:
+            comparison_data = []
+            for name, result in results.items():
+                comparison_data.append({
+                    'Model': name,
+                    'Accuracy': f"{result['accuracy']:.3%}",
+                    'CV Score (mean)': f"{result['cv_scores'].mean():.3%}",
+                    'AUC-ROC': f"{result['roc_data']['auc']:.3f}"
+                })
+            st.table(pd.DataFrame(comparison_data))
+        
+        with tabs[1]:
+            st.plotly_chart(plot_roc_curves(results), use_container_width=True)
+        
+        with tabs[2]:
+            for name, result in results.items():
+                if result['feature_importance']:
+                    st.subheader(f"{name} Feature Importance")
+                    st.plotly_chart(plot_feature_importance(result['feature_importance']), use_container_width=True)
+        
+        with tabs[3]:
+            st.subheader(f"Confusion Matrix - {selected_model}")
+            conf_matrix = results[selected_model]['confusion_matrix']
+            st.plotly_chart(plot_confusion_matrix(conf_matrix), use_container_width=True)
             
-            # Model comparison plot
-            plot_model_comparison(results)
+            # Add confusion matrix interpretation
+            tn, fp, fn, tp = conf_matrix.ravel()
+            st.markdown(f"""
+            *Confusion Matrix Interpretation:*
+            * True Negatives (Correctly Predicted Denials): {tn}
+            * False Positives (Incorrectly Predicted Approvals): {fp}
+            * False Negatives (Incorrectly Predicted Denials): {fn}
+            * True Positives (Correctly Predicted Approvals): {tp}
+            """)
+        
+        with tabs[4]:
+            st.subheader(f"Classification Report - {selected_model}")
+            report = results[selected_model]['classification_report']
+            st.plotly_chart(plot_classification_report(report), use_container_width=True)
             
-            # Tabs for confusion matrices
-            tabs = st.tabs(list(results.keys()))
-            for tab, (name, result) in zip(tabs, results.items()):
-                with tab:
-                    plot_confusion_matrix(result['confusion_matrix'], name, key=f"conf_matrix_{name}")
+            # Add classification report interpretation
+            st.markdown(f"""
+            *Classification Metrics:*
+            * Overall Accuracy: {report['accuracy']:.2%}
+            * Macro Avg F1-Score: {report['macro avg']['f1-score']:.2%}
+            * Weighted Avg F1-Score: {report['weighted avg']['f1-score']:.2%}
+            """)
+        
+        with tabs[5]:
+            st.image('decision_tree.png')
     
     except Exception as e:
-        st.error(f"""
-            Error loading data or training models. Please ensure:
-            1. The 'Application_Data.csv' file is in the same directory as this script
-            2. The file contains the expected columns
-            3. You have all required dependencies installed
-            
-            Error details: {str(e)}
-        """)
+        logger.error(f"Application error: {str(e)}")
+        st.error(f"An error occurred: {str(e)}")
 
 if __name__ == '__main__':
     main()
